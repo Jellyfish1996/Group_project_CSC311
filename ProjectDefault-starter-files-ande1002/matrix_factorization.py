@@ -150,6 +150,7 @@ def als(train_data, k, lr, num_iteration):
     #                       END OF YOUR CODE                            #
     #####################################################################
     return mat
+
 def als_with_modification(train_data, k, lr, num_iteration, theta, beta):
     """Performs ALS algorithm, here we use the iterative solution - SGD
     rather than the direct solution.
@@ -173,7 +174,7 @@ def als_with_modification(train_data, k, lr, num_iteration, theta, beta):
     #                                                      #
     # Implement the function as described in the docstring.             #
     #####################################################################
-
+    bias = np.mean(train_data["is_correct"])
 
     for it in range(num_iteration):
         i = np.random.choice(len(train_data["user_id"]))
@@ -181,7 +182,7 @@ def als_with_modification(train_data, k, lr, num_iteration, theta, beta):
         question_id = train_data["question_id"][i]
         score = train_data["is_correct"][i]
 
-        pred = theta[user_id] + beta[question_id] + np.dot(u[user_id], z[question_id])
+        pred = bias + theta[user_id] + beta[question_id] + np.dot(u[user_id], z[question_id])
         error = score - pred
 
         u_old = u[user_id].copy()
@@ -193,7 +194,7 @@ def als_with_modification(train_data, k, lr, num_iteration, theta, beta):
         beta[question_id] += lr * error
 
     # Reconstruct the final prediction matrix
-    final_predictions = theta[:, np.newaxis] + beta[np.newaxis, :] + np.dot(u, z.T)
+    final_predictions = bias + theta[:, np.newaxis] + beta[np.newaxis, :] + np.dot(u, z.T)
     return final_predictions
 
     #####################################################################
@@ -297,10 +298,10 @@ def main():
 
     theta = np.zeros(train_matrix.shape[0])
     beta = np.zeros(train_matrix.shape[1])
-    mat = als_with_modification(train_data, 1000, 0.01, 100000, theta, beta)
+    mat = als_with_modification(train_data, 5000, 0.005, 500000, theta, beta)
     acc = sparse_matrix_evaluate(val_data, mat)
     print(acc)
-    mat = als(train_data, 1000, 0.01, 100000)
+    mat = als(train_data, 5000, 0.005, 500000)
     acc = sparse_matrix_evaluate(val_data, mat)
     print(acc)
 
