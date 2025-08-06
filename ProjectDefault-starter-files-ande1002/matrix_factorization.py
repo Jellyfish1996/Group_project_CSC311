@@ -1,5 +1,6 @@
 import matplotlib
 import skopt
+from scipy.interpolate import make_interp_spline
 from scipy.linalg import sqrtm
 import matplotlib.pyplot as plt
 import numpy as np
@@ -151,6 +152,7 @@ def als(train_data, k, lr, num_iteration):
     #####################################################################
     return mat
 
+
 def als_with_modification(train_data, k, lr, num_iteration, theta, beta):
     """Performs ALS algorithm, here we use the iterative solution - SGD
     rather than the direct solution.
@@ -160,6 +162,8 @@ def als_with_modification(train_data, k, lr, num_iteration, theta, beta):
     :param k: int
     :param lr: float
     :param num_iteration: int
+    :param theta: A zeroed matrix representing student skill level
+    :param beta: A zeroed matrix representing question difficulty
     :return: 2D reconstructed Matrix.
     """
     # Initialize u and z
@@ -193,7 +197,6 @@ def als_with_modification(train_data, k, lr, num_iteration, theta, beta):
         theta[user_id] += lr * error
         beta[question_id] += lr * error
 
-    # Reconstruct the final prediction matrix
     final_predictions = bias + theta[:, np.newaxis] + beta[np.newaxis, :] + np.dot(u, z.T)
     return final_predictions
 
@@ -234,7 +237,7 @@ def als_with_tracking(train_data, val_data, k, lr, num_iterations):
     return mat, train_losses, val_losses
 
 
-def helper_evaluate(k, lr, num_iter, train_data, val_data):
+def helper_evaluate(k, lr, num_iter, train_data, val_data, theta, beta):
     """
     :param train_data: The training data used to evaluate training accuracy based on
     hyper_parameters
@@ -244,11 +247,12 @@ def helper_evaluate(k, lr, num_iter, train_data, val_data):
     :return: A float representing negative accuracy (gp minimize minimizes accuracy)
     """
 
-    accuracy = sparse_matrix_evaluate(val_data, als(train_data, k, lr, num_iter))
+    accuracy = sparse_matrix_evaluate(val_data, als_with_modification(train_data, k, lr, num_iter,
+                                                                      theta, beta))
     return -accuracy
 
 
-def find_optimal_hyperparameters(search_space, iterations, train_data, val_data):
+def find_optimal_hyperparameters(search_space, iterations, train_data, val_data, theta, beta):
     """
      Designed to predict optimal hyperparameters using Bayesian Optimization.
 
@@ -284,7 +288,10 @@ def find_optimal_hyperparameters(search_space, iterations, train_data, val_data)
         hyperparameters[1],
         hyperparameters[2],
         train_data,
-        val_data
+        val_data,
+        theta,
+        beta
+
     )
 
     return skopt.gp_minimize(function_to_minimize, search_space, n_calls=iterations)
@@ -296,14 +303,67 @@ def main():
     val_data = load_valid_csv("./data")
     test_data = load_public_test_csv("./data")
 
+    k_values = [1, 3, 5, 10, 20, 50, 100, 200, 500, 1000, 2000]
+    learning_rates = [0.01, 0.1, 0.2, 0.3, 0.4, 0.5]
+    iterations = [500, 1000, 5000, 8000, 10000, 15000]
+    als_with_modification_accuracy = []
+    als_accuracy = []
+    hyperparameters = []
     theta = np.zeros(train_matrix.shape[0])
     beta = np.zeros(train_matrix.shape[1])
-    mat = als_with_modification(train_data, 5000, 0.005, 500000, theta, beta)
-    acc = sparse_matrix_evaluate(val_data, mat)
-    print(acc)
-    mat = als(train_data, 5000, 0.005, 500000)
-    acc = sparse_matrix_evaluate(val_data, mat)
-    print(acc)
+    for k in k_values:
+        for lr in learning_rates:
+            for num_iter in iterations:
+                mat = als_with_modification(train_data, k, lr, num_iter, theta, beta)
+                acc = sparse_matrix_evaluate(val_data, mat)
+                als_with_modification_accuracy.append(acc)
+                mat = als(train_data, k, lr, num_iter)
+                acc = sparse_matrix_evaluate(val_data, mat)
+                als_accuracy.append(acc)
+                hyperparameters.append((k, lr, num_iter))
+
+    plt.figure(figsize=(8, 6))
+    plt.scatter(als_accuracy, als_with_modification_accuracy, alpha=0.7)
+    plt.plot([0, 1], [0, 1], 'r--', label='y = x (equal performance)')
+
+    plt.xlabel('Original ALS Accuracy')
+    plt.ylabel('Modified ALS Accuracy')
+    plt.title('ALS vs ALS with Modification')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+    x = range(len(als_accuracy))  # indices for each run
+
+    plt.figure(figsize=(12, 6))
+    plt.plot(x, als_accuracy, label='ALS Original', marker='o')
+    plt.plot(x, als_with_modification_accuracy, label='ALS Modified', marker='o')
+
+    plt.xlabel('Run Index (Hyperparameter Combination)')
+    plt.ylabel('Validation Accuracy')
+    plt.title('ALS vs Modified ALS Accuracy')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+    x = np.arange(len(als_accuracy))
+
+    x_smooth = np.linspace(x.min(), x.max(), 500)
+
+    als_smooth = make_interp_spline(x, als_accuracy)(x_smooth)
+    als_mod_smooth = make_interp_spline(x, als_with_modification_accuracy)(x_smooth)
+
+    plt.figure(figsize=(14, 6))
+    plt.plot(x_smooth, als_smooth, label='ALS Original', linewidth=2)
+    plt.plot(x_smooth, als_mod_smooth, label='ALS Modified', linewidth=2)
+
+    plt.xlabel('Hyperparameter Combination Index')
+    plt.ylabel('Validation Accuracy')
+    plt.title('ALS vs ALS with Modification Accuracy (Smooth Curve)')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
 
     # #####################################################################
     # #                                                          #
@@ -399,7 +459,7 @@ def main():
     # plt.legend()
     # plt.grid(True)
     # plt.show()
-    #
+
     # # #####################################################################
     # # #                       END OF YOUR CODE                            #
     # # #####################################################################
@@ -408,14 +468,16 @@ def main():
     # # # In this part we try to optimize hyperparameters using our         #
     # # # find_optimal_hyperparameters function we will try 1000 iterations #
     # # #####################################################################
-    # # # First create our search space
+    # # First create our search space
     # search_space = [
     #     Integer(1, 1000, name='k'),
     #     Real(0.0001, 0.3, name='lr'),  # Keep at less than 0.3 or becomes unstable
     #     Integer(1, 1000, name='num_iter'),
     # ]
     # # Now call our function
-    # result = find_optimal_hyperparameters(search_space, 100, train_data, val_data)
+    # theta = np.zeros(train_matrix.shape[0])
+    # beta = np.zeros(train_matrix.shape[1])
+    # result = find_optimal_hyperparameters(search_space, 100, train_data, val_data, theta, beta)
     #
     # print(f"Optimal hyperparameters: k={result.x[0]}, lr={result.x[1]}, num_iter={result.x[2]}")
     # print(f"Best score achieved: {-result.fun}")
@@ -434,10 +496,10 @@ def main():
     #
     # plt.tight_layout()
     # plt.show()
-    #
-    # # mat = als(train_data, 10000, 0.01, 3000000)
-    # # val_acc = sparse_matrix_evaluate(val_data, mat)
-    # # print(val_acc)
+
+    # mat = als_with_modification(train_data, 650, 0.017, 3000000, theta, beta)
+    # val_acc = sparse_matrix_evaluate(val_data, mat)
+    # print(val_acc)
 
 
 if __name__ == "__main__":
